@@ -122,7 +122,7 @@ def diff2(u, D, dt, dx):
     f = np.zeros(n)
     
     for i in range(n):
-        f[i] = u[i] + D*dt/2/dx**2*(u[(i+1)%n]+u[(i-1)%n]-2*u[i])
+        f[i] = u[i] + D*dt/dx**2*(u[(i+1)%n]+u[(i-1)%n]-2*u[i])
 
     return f
 
@@ -147,33 +147,34 @@ def rankine_field(xc, yc, x_, y_, gamma, a):
     return vx, vy
 
 
-np.random.seed(1)
+np.random.seed(21314123)
 
-bounds_x = [-np.pi, np.pi]
+bounds_x = np.array([-np.pi, np.pi])
 length_x = bounds_x[1]-bounds_x[0]
-nx = 256
+nx = 255
 dx = length_x/nx
-# x = np.linspace(*bounds_x, nx)
-x = np.arange(*bounds_x, dx)
+x = np.linspace(*bounds_x, nx+1)[1:]
+# x = np.arange(*bounds_x, dx)
 
-bounds_y = [-np.pi, np.pi]
+bounds_y = np.array([-np.pi, np.pi])
 length_y = bounds_y[1]-bounds_y[0]
-ny = 256
+ny = 255
 dy = length_y/ny
-# y = np.linspace(*bounds_y, ny)
-y = np.arange(*bounds_y, dy)
+y = np.linspace(*bounds_y, ny+1)[1:]
+# y = np.arange(*bounds_y, dy)pl
 
 x_, y_ = np.meshgrid(x, y, indexing="ij")
 
 bounds = np.array([bounds_x, bounds_y])
 
-D = 1e-4
-# r = 1
-# K = 10
+comp_rad = 1.
+D = 1e-3
+r = 2
+K = 1
 gamma = 0
 
 r_int_r = 0
-comp_rad = 0.
+# comp_rad = 0.1
 r_int = int(comp_rad/dx)
 
 int_idx_r = []
@@ -201,15 +202,16 @@ for i in range(-r_int,r_int+1):
         if i**2+j**2<=r_int**2:
             m[i+r_int,j+r_int] = 1.
             m_norm += 1
-m /= m_norm
+
+# m *= dx*dx/(np.pi*comp_rad**2)
 
 m2 = np.zeros((nx,ny))
 m2[nx//2-r_int:nx//2+r_int+1,ny//2-r_int:ny//2+r_int+1] = m
 
 # u0 = np.zeros_like(x_)
 # u0[(x_-1)**2+y_**2 < (np.pi/4)**2] = K/10
-# u0 = np.random.normal(1, 0.5, size=x_.shape)
-u0 = np.random.uniform(10, 100, size=x_.shape)
+u0 = np.random.normal(1, 0.5, size=x_.shape)
+# u0 = np.random.uniform(1, 0.1, size=x_.shape)
 # u0 = K * (1 + 0.1*np.sin(5*x_)*np.sin(5*y_))
 # u0[x_**2+y_**2 > (0.9*np.pi)**2] = 0
 # u0[0] = K
@@ -236,9 +238,9 @@ periodic_vortices = periodic_repetitions(vortices, bounds, space_repetitions)
 particles = np.random.normal(1, 0.2, size=(n_particle,2))
 
 # vx, vy = pv_field(0, vortices, strengths, x_, y_)
-# vx = (np.sin(y_)+1e-2)
+vx = 10.*np.sin(y_)#+1e-2
 # vx = np.sin(x_+np.pi/2)*5+5.1
-vx = -(y_-np.pi)*(y_+np.pi)/np.pi**2
+# vx = -(y_-np.pi)*(y_+np.pi)/np.pi**2
 # vx = 0.9/(2*np.pi)*x_
 # vx[128:-128] = 1.
 # vx = 1*np.ones_like(x_)
@@ -246,7 +248,7 @@ vy = vx*0
 # vx *= 0
 bounds = np.array([bounds_x, bounds_y])
 
-# vx, vy = rankine_field(0, 0, x_, y_, 1, np.pi/4)
+# vx, vy = rankine_field(0, 0, x_, y_, 1, np.pi/4)  
 # vx, vy = rankine_field(0, 0, x_, y_, 1, 1)
 # vx1, vy1 = rankine_field(0, -1, x_, y_, 1, 1)
 # vx += vx1; vy += vy1
@@ -401,81 +403,44 @@ def rk4_adv_reac_step_single_species(x, y, x_, y_, vx, vy, r, K, D, u, dt, dtD_r
 
     return u_n
 
-@jit(fastmath=True, parallel=True)
+@jit(parallel=True)
 def euler_adv_reac_step_single_species(x, y, x_, y_, vx, vy, gamma, D, u, dt, dtD_ratio, dtD, int_idx_r, int_area_r, int_idx, int_area, m2):
     x_dt = x_ - gamma*vx*dt
     y_dt = y_ - gamma*vy*dt
     
     s = np.sum(u)
     
-    # u_n = nb_interp2d_periodic(x_dt, y_dt, x, y, u, rescale=False)
-    u_n = nb_i_p.interp2d_periodic(x_dt, y_dt, x, y, u, rescale=False)
-    # u_n = nb_interp2d(x_dt, y_dt, x, y, u, rescale=False)
+    u0 = np.copy(u)
     
-    # for j in range(nx):
-    #     for k in range(ny):
-    #         if x[j]**2+y[k]**2 > (0.9*np.pi)**2:
-    #             u_n[j,k] = 0
+    u += dt * r*u*(1-dx*dy*fftpack.ifftshift(fftpack.ifft2(fftpack.fft2(u)*fftpack.fft2(m2)).astype(np.float64)))
     
-    u_n *= s/np.sum(u_n)
+    # uf = fftpack.fft2(u0)
+    # k = fftpack.fftfreq(len(x), np.diff(x)[0])
+    # k2 = np.zeros((len(k), len(k)))
     
-    # u = np.copy(u_n)
-    
-    # u_n += dt * (r*u)
-    # u_n += dt * (r*u*(1-u/K))
-    
-    # for j in range(nx):
-    #     for k in range(ny):
-    #         if x[j]**2+y[k]**2 < (0.9*np.pi)**2:
-    #             for ix in range(j-int(r_int/dx+1), j+int(r_int/dx+1)+1):
-    #                 for iy in range(k-int(r_int/dy+1), k+int(r_int/dy+1)+1):
-    #                     if (x[ix]-x[j])**2+(y[iy]-y[k])**2 <= r_int**2 :
-    #                         u_n[j,k] += dt * (-r/K*u[j,k]*u[ix,iy])*np.exp(-((x[ix]-x[j])**2+(y[iy]-y[k])**2)/2/(r_int/2)**2)
-    
-    # for j in prange(nx):
-    #     for k in prange(ny):
-    #         for ix, iy in int_idx_r:
-    #             # u_n[j,k] += dt * (r*u[(j+´ix)%nx,(k+iy)%ny]/int_area_r)
-    #             u_n[j,k] += dt * (u[j,k])
-    #         for ix, iy in int_idx:
-    #             u_n[j,k] += dt * (-u[j,k]*u[(j+ix)%nx,(k+iy)%ny]/int_area)
-                
-    u_n += dt * u*(1-fftpack.ifftshift(fftpack.ifft2(fftpack.fft2(u)*fftpack.fft2(m2)).astype(np.float64)))
-    
-    # for i in range(nx):
-    #     for j in range(ny):
-    #         if x[i]**2+y[j]**2 < (0.9*np.pi)**2:
-    #             u_n[i,j] += r*u[i,j]*(1-u[i,j]/K)
-    
-    # u = np.copy(u_n)
+    # for i in range(len(k)):
+    #     for j in range(len(k)):
+    #         k2[i,j] = k[i]*k[i] + k[j]*k[j]
+            
+    # for i in range(dtD_ratio):
+    #     uf += dt * ( -D*k2*uf )
+        
+    # u = fftpack.ifft2(uf).real
     
     for i in range(dtD_ratio):
+        u2 = np.copy(u)
         for j in prange(nx):
-            for k in prange(ny):
-                u_n[j,k] += (D*dtD/dx**2*(u[(j+1)%nx,k]+u[(j-1)%nx,k]-2*u[j,k]) + 
-                                D*dtD/dy**2*(u[j,(k+1)%ny]+u[j,(k-1)%ny]-2*u[j,k]))
+            for k in prange(ny):                
+                u[j,k] += (D*dtD/dx**2*(u2[(j+1)%nx,k]+u2[(j-1)%nx,k]-2*u2[j,k]) + 
+                                D*dtD/dy**2*(u2[j,(k+1)%ny]+u2[j,(k-1)%ny]-2*u2[j,k]))
                 
-    # for i in range(dtD_ratio):
-    #     for j in range(1, nx-1):
-    #         for k in range(1, ny-1):
-    #             u_n[j,k] += (D*dtD/dx**2*(u[j+1,k]+u[j-1,k]-2*u[j,k]) + 
-    #                             D*dtD/dy**2*(u[j,k+1]+u[j,k-1]-2*u[j,k]))
-    
-    # for i in range(dtD_ratio):
-    #     for j in range(1, nx-1):
-    #         for k in range(1, ny-1):
-    #             if x[j]**2+y[k]**2 < (0.9*np.pi)**2:
-    #                 u_n[j,k] += (D*dtD/dx**2*(u[j+1,k]+u[j-1,k]-2*u[j,k]) + 
-    #                                 D*dtD/dy**2*(u[j,k+1]+u[j,k-1]-2*u[j,k]))
-    #             else:
-    #                 u_n[j,k] = 0
-    
-    # u_n *= s/np.sum(u_n)
+    # u_n = nb_i_p.interp2d_periodic(x_dt, y_dt, x, y, u, rescale=False)
+    u_n = u.copy()
 
     return u_n
 
 
-n_plots = 150
+n_plots = 1000
 
 # print(f"Courant number: {dt*(np.max(np.abs(vx))/dx+np.max(np.abs(vy))/dy)}")
 
@@ -489,19 +454,19 @@ if "parabolic_videos" not in os.listdir():
 for g in gamma:
     
     seed = 0
-    path = f"parabolic_videos/gamma{g:.6f}_D{D:.5f}_R{comp_rad:.6f}_seed{seed}"
-    if path.split("/")[1] not in os.listdir("parabolic_videos"):
-        os.mkdir(path)
+    # path = f"parabolic_videos/gamma{g:.6f}_D{D:.5f}_R{comp_rad:.6f}_seed{seed}"
+    # if path.split("/")[1] not in os.listdir("parabolic_videos"):
+    #     os.mkdir(path)
     
     # h5file = h5py.File(f"{path}/dat.h5", "w")
     
-    np.random.seed(seed)
+    # np.random.seed(seed)
     # u = np.random.normal(1, 0.1, size=x_.shape)
-    u = np.random.uniform(10, 20, size=x_.shape)
+    # u = np.random.uniform(1, 10, size=x_.shape)
     
-    T = 1000
+    T = 1500
     # dt = 0.01
-    dt = min(0.01, (dx*dx+dy*dy)/D/8)
+    dt = min(0.005, (dx*dx+dy*dy)/D/8)
     if g != 0:
         dt = min(dt, 0.5/(np.max(np.abs(g*vx))/dx+np.max(np.abs(g*vy))/dy))
     dtD_ratio = max(1, round(dt/((dy**2+dx**2)/D/8)))
@@ -513,29 +478,29 @@ for g in gamma:
     conc = [np.mean(u)]
     conc_std = [np.std(u)]
     
-    plt.subplots(1, 2, figsize=(25,10))
-    plt.subplots_adjust(wspace=0.05)
-    plt.subplot(1,2,1)
-    # plt.contourf(x, y, u.T, 100, cmap="Greens")
-    plt.imshow(u.T, cmap="Greens", origin="lower")
-    plt.xticks(np.linspace(0, nx-1, 5), np.round(np.linspace(*bounds_x, 5), 2))
-    plt.yticks(np.linspace(0, ny-1, 5), np.round(np.linspace(*bounds_y, 5), 2))
-    plt.colorbar(ticks=np.linspace(np.min(u), np.min(u)+0.9*(np.max(u)-np.min(u)), 7))
-    # plt.contourf(x, y, vort_sign.T, 1, cmap="coolwarm", alpha=0.2, antialiased=True)
-    # plt.scatter(*conv_scale(vortices[strengths>0]).T, c="b", s=20)
-    # plt.scatter(*conv_scale(vortices[strengths<0]).T, c="r", s=20)
-    # plt.scatter(*particles.T, c="k", s=10, alpha=0.3)
-    # plt.quiver(x[::10], y[::10], vx_norm[::10,::10].T, vy_norm[::10,::10].T, m[::10,::10].T, cmap="hot", alpha=0.4)
-    # plt.xlim(-0.5)
-    plt.xlim(0, nx)
-    plt.ylim(0, ny)
-    # plt.xticks([])
-    # plt.yticks([])
-    plt.title(f"t = {0.0}")
-    plt.subplot(1,2,2)
-    plt.plot(conc_time, conc, c="g")
-    # plt.fill_between(conc_time, np.array(conc)-np.array(conc_std), np.array(conc)+np.array(conc_std), color="g", alpha=0.3)
-    plt.show()
+    # plt.subplots(1, 2, figsize=(25,10))
+    # plt.subplots_adjust(wspace=0.05)
+    # plt.subplot(1,2,1)
+    # # plt.contourf(x, y, u.T, 100, cmap="Greens")
+    # plt.imshow(u.T, cmap="Greens", origin="lower")
+    # plt.xticks(np.linspace(0, nx-1, 5), np.round(np.linspace(*bounds_x, 5), 2))
+    # plt.yticks(np.linspace(0, ny-1, 5), np.round(np.linspace(*bounds_y, 5), 2))
+    # plt.colorbar(ticks=np.linspace(np.min(u), np.min(u)+0.9*(np.max(u)-np.min(u)), 7))
+    # # plt.contourf(x, y, vort_sign.T, 1, cmap="coolwarm", alpha=0.2, antialiased=True)
+    # # plt.scatter(*conv_scale(vortices[strengths>0]).T, c="b", s=20)
+    # # plt.scatter(*conv_scale(vortices[strengths<0]).T, c="r", s=20)
+    # # plt.scatter(*particles.T, c="k", s=10, alpha=0.3)
+    # # plt.quiver(x[::10], y[::10], vx_norm[::10,::10].T, vy_norm[::10,::10].T, m[::10,::10].T, cmap="hot", alpha=0.4)
+    # # plt.xlim(-0.5)
+    # plt.xlim(0, nx)
+    # plt.ylim(0, ny)
+    # # plt.xticks([])
+    # # plt.yticks([])
+    # plt.title(f"t = {0.0}")
+    # plt.subplot(1,2,2)
+    # plt.plot(conc_time, conc, c="g")
+    # # plt.fill_between(conc_time, np.array(conc)-np.array(conc_std), np.array(conc)+np.array(conc_std), color="g", alpha=0.3)
+    # plt.show()
     # plt.savefig(f"{path}/fig{0:03d}")
     # plt.close()
     
@@ -566,11 +531,11 @@ for g in gamma:
             conc_time.append(t[n])
             conc.append(np.mean(u))
     
-            m = np.hypot(vx, vy)
-            # print(np.mean(m))
-            # v = np.sqrt(vx**2+vy**2)
-            # vx_norm[np.where(v!=0)] = vx[np.where(v!=0)] / np.sqrt(vx**2+vy**2)[np.where(v!=0)]
-            # vy_norm[np.where(v!=0)] = vy[np.where(v!=0)] / np.sqrt(vx**2+vy**2)[np.where(v!=0)]
+        #     m = np.hypot(vx, vy)
+        #     # print(np.mean(m))
+        #     # v = np.sqrt(vx**2+vy**2)
+        #     # vx_norm[np.where(v!=0)] = vx[np.where(v!=0)] / np.sqrt(vx**2+vy**2)[np.where(v!=0)]
+        #     # vy_norm[np.where(v!=0)] = vy[np.where(v!=0)] / np.sqrt(vx**2+vy**2)[np.where(v!=0)]
             plt.subplots(1, 2, figsize=(25,10))
             plt.subplots_adjust(wspace=0.05)
             plt.subplot(1,2,1)
@@ -585,8 +550,8 @@ for g in gamma:
             # plt.scatter(*particles.T, c="k", s=10, alpha=0.3)
             # plt.quiver(x[::10], y[::10], vx_norm[::10,::10].T, vy_norm[::10,::10].T, m[::10,::10].T, cmap="hot", alpha=0.4)
             # plt.xlim(-0.5)
-            plt.xlim(0, nx)
-            plt.ylim(0, ny)
+            plt.xlim(0, nx-1)
+            plt.ylim(0, ny-1)
             # plt.xticks([])
             # plt.yticks([])
             plt.title(f"t = {t[n]:0.1f}")
@@ -595,7 +560,7 @@ for g in gamma:
             # plt.fill_between(conc_time, np.array(conc)-np.array(conc_std), np.array(conc)+np.array(conc_std), color="g", alpha=0.3)
             plt.show()
             # plt.savefig(f"{path}/fig{n // (nt//n_plots):03d}")
-            # plt.close()
+            plt.close()
             
     #         h5file.create_dataset(f"t{t[n]}", data=u)
     
@@ -603,3 +568,27 @@ for g in gamma:
     # h5file.create_dataset("conc", data=conc)
     # h5file.create_dataset("conc_std", data=conc_std)
     # h5file.close()
+    
+# plt.subplots(1, 2, figsize=(25,10))
+# plt.subplots_adjust(wspace=0.05)
+# plt.subplot(1,2,1)
+# # plt.contourf(x, y, u.T, 100, cmap="Greens")
+# plt.imshow(u.T, cmap="Greens", origin="lower")
+# plt.xticks(np.linspace(0, nx-1, 5), np.round(np.linspace(*bounds_x, 5), 2))
+# plt.yticks(np.linspace(0, ny-1, 5), np.round(np.linspace(*bounds_y, 5), 2))
+# plt.colorbar(ticks=np.linspace(np.min(u), np.min(u)+0.9*(np.max(u)-np.min(u)), 7))
+# # plt.contourf(x, y, vort_sign.T, 1, cmap="coolwarm", alpha=0.2, antialiased=True)
+# # plt.scatter(*conv_scale(vortices[strengths>0]).T, c="b", s=20)
+# # plt.scatter(*conv_scale(vortices[strengths<0]).T, c="r", s=20)
+# # plt.scatter(*particles.T, c="k", s=10, alpha=0.3)
+# # plt.quiver(x[::10], y[::10], vx_norm[::10,::10].T, vy_norm[::10,::10].T, m[::10,::10].T, cmap="hot", alpha=0.4)
+# # plt.xlim(-0.5)
+# plt.xlim(0, nx)
+# plt.ylim(0, ny)
+# # plt.xticks([])
+# # plt.yticks([])
+# plt.title(f"t = {t[n]:0.1f}")
+# plt.subplot(1,2,2)
+# plt.plot(conc_time, conc, c="g")
+# # plt.fill_between(conc_time, np.array(conc)-np.array(conc_std), np.array(conc)+np.array(conc_std), color="g", alpha=0.3)
+# plt.show()
